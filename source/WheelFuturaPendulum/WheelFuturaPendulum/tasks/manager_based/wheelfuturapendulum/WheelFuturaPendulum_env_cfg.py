@@ -23,7 +23,7 @@ from . import mdp
 # Pre-defined configs
 ##
 
-from isaaclab_assets import WHEEL_FUTURA_PENDULUM_CFG  # isort:skip
+from WheelFuturaPendulum.assets.robots import WHEEL_FUTURA_PENDULUM_CFG  # isort:skip
 
 ##
 # Scene definition
@@ -53,9 +53,9 @@ class WheelFuturaPendulumSceneCfg(InteractiveSceneCfg):
 class ActionsCfg:
     """Action specifications for the MDP."""
     joint_effort = mdp.JointEffortActionCfg(
-        asset_name="robot", 
-        joint_names=["wheel_joint"], 
-        scale=10.0)
+        asset_name="robot",
+        joint_names=["wheel_joint"],
+        scale=30.0)
 
 @configclass
 class ObservationsCfg:
@@ -65,10 +65,14 @@ class ObservationsCfg:
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
         # observation terms (order preserved)
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel)
+        # sin/cos encoding for pendulum joints (avoids pi-wrap discontinuity)
+        joint_sin_cos = ObsTerm(func=mdp.joint_sin_cos_pos,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint1", "joint2"])})
+        # raw position for wheel joint (no wrap issue)
+        wheel_pos_rel = ObsTerm(func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["wheel_joint"])})
+        # velocities for all joints
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel)
-        # target pos
-        # target_pos = ObsTerm(func=mdp.return_target_joint_pos)
 
         def __post_init__(self) -> None:
             self.enable_corruption = False
@@ -81,32 +85,36 @@ class ObservationsCfg:
 @configclass
 class EventCfg:
     """Configuration for events."""
+
+    # reset joint1: small random offset
     reset_joint1_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["joint1"]),
-            "position_range": (-1.0*math.pi, 1.0*math.pi),
-            "velocity_range": (-0.5*math.pi, 0.5*math.pi),
+            "position_range": (-0.5, 0.5),
+            "velocity_range": (-0.5, 0.5),
         },
     )
 
+    # reset joint2: small random offset
     reset_joint2_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["joint2"]),
-            "position_range": (-1.0*math.pi, 1.0*math.pi),
-            "velocity_range": (-0.5*math.pi, 0.5*math.pi),
+            "position_range": (-0.5, 0.5),
+            "velocity_range": (-0.5, 0.5),
         },
     )
 
+    # reset wheel: small random rotation
     reset_wheel_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=["wheel_joint"]),
-            "position_range": (-0.1, 0.1),
+            "position_range": (-0.5, 0.5),
             "velocity_range": (-0.5, 0.5),
         },
     )
@@ -117,37 +125,43 @@ class RewardsCfg:
     alive = RewTerm(func=mdp.is_alive, weight=1.0)
     # (2) Failure penalty
     terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
-    # primary task：minimize the error
-    tracking_error = RewTerm(
-        func=mdp.joint_pos_target_l2,
-        weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint1"])},
+    # primary task: smooth cos-based reward for joint1 (target π/2)
+    upright_j1 = RewTerm(
+        func=mdp.upright_reward_cos,
+        weight=2.0,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint1"]), "target": math.pi / 2},
     )
 
-    tracking_error = RewTerm(
-        func=mdp.joint_pos_target_l2,
-        weight=-5.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint2"]), "target": -math.pi},
+    # primary task: smooth cos-based reward for joint2 (target π)
+    upright_j2 = RewTerm(
+        func=mdp.upright_reward_cos,
+        weight=5.0,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint2"]), "target": math.pi},
     )
 
-    # 速度惩罚，抑制残余振荡
-    joint_vel = RewTerm(
+    # velocity penalty for pendulum joints
+    joint_vel_pend = RewTerm(
         func=mdp.joint_vel_l2,
-        weight=-0.005,
+        weight=-0.002,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["joint[1-2]"])},
     )
 
-    joint_vel = RewTerm(
+    # small velocity penalty for wheel
+    joint_vel_wheel = RewTerm(
         func=mdp.joint_vel_l2,
-        weight=-0.005,
+        weight=-0.001,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["wheel_joint"])},
     )
+
+    # action penalty: discourage wasteful wheel spinning
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.001)
 
 
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    illegal_state = DoneTerm(func=mdp.illegal_state)
 
 
 ##
@@ -157,7 +171,7 @@ class TerminationsCfg:
 @configclass
 class WheelFuturaPendulumEnvCfg(ManagerBasedRLEnvCfg):
     # Scene settings
-    scene: WheelFuturaPendulumSceneCfg = WheelFuturaPendulumSceneCfg(num_envs=4096, env_spacing=4.0)
+    scene: WheelFuturaPendulumSceneCfg = WheelFuturaPendulumSceneCfg(num_envs=1024, env_spacing=4.0)
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -177,3 +191,4 @@ class WheelFuturaPendulumEnvCfg(ManagerBasedRLEnvCfg):
         # simulation settings
         self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation
+        self.sim.physx.enable_external_forces_every_iteration = True

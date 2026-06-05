@@ -1,135 +1,112 @@
-# Template for Isaac Lab Projects
+# WheelFuturaPendulum — Isaac Lab Project
 
-## Overview
+**A momentum-wheel inverted pendulum** RL control environment built on [Isaac Lab](https://github.com/isaac-sim/IsaacLab). The system consists of a two-link pendulum with a reaction wheel at the tip — only the wheel is actuated, making this an **underactuated swing-up and balance control** problem.
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+## Dependencies
 
-**Key Features:**
-
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
-
-**Keywords:** extension, template, isaaclab
+- **[Isaac Lab](https://github.com/isaac-sim/IsaacLab)** — robot simulation framework (includes RSL-RL via `isaaclab_rl`)
+- Python 3.10+
 
 ## Installation
 
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
+```bash
+# Install this package (Isaac Lab must already be installed separately)
+python -m pip install -e source/WheelFuturaPendulum
 
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
+# Verify the environment is registered
+python -c "import gymnasium as gym; gym.make('Isaac-WheelFuturaPendulum-v0')"
+```
 
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
+## Task: `Isaac-WheelFuturaPendulum-v0`
 
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/WheelFuturaPendulum
+### System Overview
 
-- Verify that the extension is correctly installed by:
+```
+base_link (fixed)
+  └── joint1 (passive)
+        └── link1
+              └── joint2 (passive)
+                    └── link2
+                          └── wheel_joint (actuated)
+                                └── wheel_link
+```
 
-    - Listing the available tasks:
+- **Action** (1-D): torque on the reaction wheel, scaled to `[-10, 10]` N·m
+- **Observation** (4-D): `[joint1_pos, joint2_pos, joint1_vel, joint2_vel]`
+  - Relative joint positions and velocities
+- **Reward**:
+  - `+1` for staying alive (every step)
+  - `-2` on termination
+  - `-5 × ‖joint_pos − target‖²` tracking error for both `joint1` (target 0) and `joint2` (target −π)
+  - `-0.005 × ‖joint_vel‖²` velocity penalty on pendulum and wheel joints
+- **Termination**: time-out only (the pendulum needs full range to swing up)
+- **Episode length**: 5 seconds at 60 Hz policy rate → 300 steps
 
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
+### Key Configuration
 
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
+| Parameter | Value | Note |
+|-----------|-------|------|
+| `action_scale` | 10.0 | Wheel torque scaling |
+| `sim.dt` | 1/120 s | Physics step |
+| `decimation` | 2 | Policy every 2 physics steps |
+| `episode_length_s` | 5.0 | Episode duration |
 
-    - Running a task:
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
-
-    - Running a task with dummy agents:
-
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
-
-        - Zero-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
-
-### Set up IDE (Optional)
-
-To setup the IDE, please follow these instructions:
-
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
-
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
-
-### Setup as Omniverse Extension (Optional)
-
-We provide an example UI extension that will load upon enabling your extension defined in `source/WheelFuturaPendulum/WheelFuturaPendulum/ui_extension_example.py`.
-
-To enable your extension, follow these steps:
-
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
-
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
-
-## Code formatting
-
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
+## Training
 
 ```bash
-pip install pre-commit
+# With rendering (default: 4096 parallel envs)
+python scripts/rsl_rl/train.py --task Isaac-WheelFuturaPendulum-v0 --max_iterations 150
+
+# Headless (faster)
+python scripts/rsl_rl/train.py --task Isaac-WheelFuturaPendulum-v0 --headless --max_iterations 150
 ```
 
-Then you can run pre-commit with:
+Training logs are saved to `logs/rsl_rl/`. Monitor with TensorBoard:
 
 ```bash
-pre-commit run --all-files
+tensorboard --logdir logs/rsl_rl
 ```
 
-## Troubleshooting
+### PPO Configuration (default)
 
-### Pylance Missing Indexing of Extensions
+| Parameter | Value |
+|-----------|-------|
+| `num_steps_per_env` | 16 |
+| `actor_hidden_dims` | [32, 32] |
+| `actor_obs_normalization` | False |
+| `gamma` | 0.99 |
+| `entropy_coef` | 0.005 |
+| `learning_rate` | 1.0e-3 (adaptive schedule) |
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
+## Testing the Trained Policy
 
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/WheelFuturaPendulum"
-    ]
-}
+```bash
+python scripts/rsl_rl/play.py --task Isaac-WheelFuturaPendulum-v0
 ```
 
-### Pylance Crash
+## Project Structure
 
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
-
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
 ```
+WheelFuturaPendulum/
+├── source/WheelFuturaPendulum/          # Python package
+│   ├── WheelFuturaPendulum/
+│   │   ├── assets/                      # Robot articulation config
+│   │   └── tasks/
+│   │       └── manager_based/wheelfuturapendulum/
+│   │           ├── __init__.py           # Gym registration
+│   │           ├── WheelFuturaPendulum_env_cfg.py  # MDP config
+│   │           ├── agents/
+│   │           │   └── rsl_rl_ppo_cfg.py           # PPO hyper-parameters
+│   │           └── mdp/                 # Custom reward functions
+│   └── asset/
+│       └── robots/wheel_futura_pendulum.py  # USD articulation config
+├── scripts/rsl_rl/                      # Training & play scripts
+├── usd/                                 # USD & URDF robot models
+└── logs/rsl_rl/                         # Training logs
+```
+
+## TODO (后续补充)
+
+- [ ] Train a converged policy (current max 150 iterations)
+- [ ] Adjust reward weights for better swing-up performance
+- [ ] More detailed documentation

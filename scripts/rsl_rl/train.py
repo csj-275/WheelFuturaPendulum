@@ -80,6 +80,7 @@ import os
 import time
 from datetime import datetime
 
+import numpy as np
 import gymnasium as gym
 import torch
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
